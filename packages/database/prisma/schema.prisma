@@ -1,0 +1,229 @@
+// Prisma Schema for ArcQubit Knowledge Work Platform
+// PostgreSQL 16 with pgvector extension
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions", "fullTextSearch"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DATABASE_DIRECT_URL")
+  extensions = [pgvector(map: "vector", schema: "public")]
+}
+
+// ============================================================================
+// TENANTS & USERS
+// ============================================================================
+
+model Tenant {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String   @db.VarChar(255)
+  slug            String   @unique @db.VarChar(100)
+  pqcEnabled      Boolean  @default(true) @map("pqc_enabled")
+  mlKemPublicKey  Bytes?   @map("ml_kem_public_key")
+  mlDsaPublicKey  Bytes?   @map("ml_dsa_public_key")
+  settings        Json     @default("{}")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  users              User[]
+  workspaces         Workspace[]
+  documents          Document[]
+  auditLogs          AuditLog[]
+  complianceControls ComplianceControl[]
+  qbomEntries        QBOMEntry[]
+  plugins            Plugin[]
+
+  @@index([slug])
+  @@map("tenants")
+}
+
+model User {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  email      String   @db.VarChar(255)
+  fullName   String?  @map("full_name") @db.VarChar(255)
+  role       String   @db.VarChar(50) // admin, manager, contributor, viewer
+  mfaEnabled Boolean  @default(false) @map("mfa_enabled")
+  ssoProvider String?  @map("sso_provider") @db.VarChar(50)
+  ssoId      String?  @map("sso_id") @db.VarChar(255)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdWorkspaces  Workspace[]
+  createdDocuments   Document[]
+  auditLogs          AuditLog[]
+  ownedControls      ComplianceControl[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@index([email])
+  @@map("users")
+}
+
+// ============================================================================
+// WORKSPACES & DOCUMENTS
+// ============================================================================
+
+model Workspace {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  name           String   @db.VarChar(255)
+  description    String?  @db.Text
+  parentId       String?  @map("parent_id") @db.Uuid
+  classification String   @db.VarChar(50) // public, internal, confidential, restricted
+  metadata       Json     @default("{}")
+  createdBy      String   @map("created_by") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  tenant   Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  creator  User       @relation(fields: [createdBy], references: [id])
+  parent   Workspace? @relation("WorkspaceHierarchy", fields: [parentId], references: [id])
+  children Workspace[] @relation("WorkspaceHierarchy")
+  documents Document[]
+
+  @@index([tenantId])
+  @@index([parentId])
+  @@index([classification])
+  @@map("workspaces")
+}
+
+model Document {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId            String   @map("tenant_id") @db.Uuid
+  workspaceId         String   @map("workspace_id") @db.Uuid
+  name                String   @db.VarChar(255)
+  fileType            String   @map("file_type") @db.VarChar(50)
+  fileSize            BigInt   @map("file_size")
+  storagePath         String   @map("storage_path") @db.VarChar(500)
+  version             Int      @default(1)
+  classification      String   @db.VarChar(50)
+  metadata            Json     @default("{}")
+
+  // Encryption metadata
+  encryptionAlgorithm String?  @map("encryption_algorithm") @db.VarChar(100)
+  wrappedKey          Bytes?   @map("wrapped_key")
+  pqcSignature        Bytes?   @map("pqc_signature")
+
+  // Search indexes
+  contentText         String?  @map("content_text") @db.Text
+  // Note: pgvector embedding stored as unsupported type, accessed via raw SQL
+  // embedding vector(1536) represented as String in Prisma
+
+  createdBy           String   @map("created_by") @db.Uuid
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  creator   User      @relation(fields: [createdBy], references: [id])
+
+  @@index([tenantId])
+  @@index([workspaceId])
+  @@index([classification])
+  @@index([fileType])
+  @@map("documents")
+}
+
+// ============================================================================
+// AUDIT & COMPLIANCE
+// ============================================================================
+
+model AuditLog {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String?  @map("tenant_id") @db.Uuid
+  userId       String?  @map("user_id") @db.Uuid
+  action       String   @db.VarChar(100)
+  resourceType String?  @map("resource_type") @db.VarChar(50)
+  resourceId   String?  @map("resource_id") @db.Uuid
+  metadata     Json     @default("{}")
+  ipAddress    String?  @map("ip_address") @db.Inet
+  userAgent    String?  @map("user_agent") @db.Text
+  timestamp    DateTime @default(now())
+
+  // Relations
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User?   @relation(fields: [userId], references: [id])
+
+  @@index([tenantId, timestamp(sort: Desc)])
+  @@index([userId])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+model ComplianceControl {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String    @map("tenant_id") @db.Uuid
+  framework    String    @db.VarChar(50) // soc2, cmmc, nist_rmf, hipaa, pci
+  controlId    String    @map("control_id") @db.VarChar(100)
+  controlName  String    @map("control_name") @db.VarChar(255)
+  description  String    @db.Text
+  ownerId      String?   @map("owner_id") @db.Uuid
+  status       String    @db.VarChar(50) // met, partial, not_met
+  evidenceIds  String[]  @map("evidence_ids") @db.Uuid
+  lastReviewed DateTime? @map("last_reviewed")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  owner  User?  @relation(fields: [ownerId], references: [id])
+
+  @@index([tenantId])
+  @@index([framework])
+  @@index([status])
+  @@map("compliance_controls")
+}
+
+// ============================================================================
+// QUANTUM READINESS
+// ============================================================================
+
+model QBOMEntry {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String   @map("tenant_id") @db.Uuid
+  componentName    String   @map("component_name") @db.VarChar(255)
+  componentType    String   @map("component_type") @db.VarChar(100)
+  cryptoAlgorithms Json     @map("crypto_algorithms") // Array of algorithm names
+  quantumSafe      Boolean  @map("quantum_safe")
+  migrationStatus  String   @map("migration_status") @db.VarChar(50) // not_started, in_progress, completed
+  scanDate         DateTime @map("scan_date")
+  metadata         Json     @default("{}")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([quantumSafe])
+  @@index([migrationStatus])
+  @@map("qbom_entries")
+}
+
+// ============================================================================
+// PLUGINS
+// ============================================================================
+
+model Plugin {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  pluginName    String   @map("plugin_name") @db.VarChar(100)
+  enabled       Boolean  @default(false)
+  configuration Json     @default("{}")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, pluginName])
+  @@index([tenantId])
+  @@map("plugins")
+}

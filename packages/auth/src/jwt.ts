@@ -23,8 +23,8 @@ export function generateAccessToken(payload: Omit<JWTPayload, 'iat' | 'exp'>): s
 /**
  * Generate refresh token
  */
-export function generateRefreshToken(userId: string, sessionId: string): string {
-  return jwt.sign({ userId, sessionId, type: 'refresh' }, JWT_SECRET, {
+export function generateRefreshToken(userId: string, tenantId: string): string {
+  return jwt.sign({ userId, tenantId, type: 'refresh' }, JWT_SECRET, {
     expiresIn: REFRESH_TOKEN_EXPIRES_IN,
     algorithm: 'HS256',
   });

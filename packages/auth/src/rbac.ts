@@ -14,7 +14,7 @@ const ROLE_HIERARCHY: UserRole[] = ['viewer', 'contributor', 'manager', 'admin']
 /**
  * Permission matrix for each role
  */
-const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
+export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   viewer: [
     { resource: 'document', action: 'read' },
     { resource: 'workspace', action: 'read' },

@@ -10,8 +10,8 @@
     "test": "vitest"
   },
   "dependencies": {
-    "@arcqubit/shared": "workspace:*",
-    "@arcqubit/database": "workspace:*",
+    "@arcqubit/shared": "*",
+    "@arcqubit/database": "*",
     "zod": "^3.22.0",
     "semver": "^7.6.0",
     "vm2": "^3.9.19",

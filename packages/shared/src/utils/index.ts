@@ -85,21 +85,14 @@ export function delay(ms: number): Promise<void> {
 }
 
 /**
- * Retry a function with exponential backoff
+ * Retry a function with delays between attempts
  */
 export async function retry<T>(
   fn: () => Promise<T>,
-  options: {
-    maxAttempts?: number;
-    initialDelay?: number;
-    maxDelay?: number;
-    factor?: number;
-  } = {}
+  maxAttempts: number = 3,
+  delayMs: number = 1000
 ): Promise<T> {
-  const { maxAttempts = 3, initialDelay = 1000, maxDelay = 10000, factor = 2 } = options;
-
   let lastError: Error;
-  let delayMs = initialDelay;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -111,8 +104,7 @@ export async function retry<T>(
         throw lastError;
       }
 
-      await delay(Math.min(delayMs, maxDelay));
-      delayMs *= factor;
+      await delay(delayMs);
     }
   }
 
@@ -157,15 +149,16 @@ export function maskEmail(email: string): string {
 /**
  * Calculate pagination metadata
  */
-export function calculatePagination(total: number, page: number, limit: number) {
-  const totalPages = Math.ceil(total / limit);
+export function calculatePagination(total: number, pageSize: number, offset: number) {
+  const totalPages = Math.ceil(total / pageSize);
+  const page = Math.floor(offset / pageSize) + 1;
   const hasNext = page < totalPages;
   const hasPrev = page > 1;
 
   return {
     total,
     page,
-    limit,
+    pageSize,
     totalPages,
     hasNext,
     hasPrev,
@@ -179,16 +172,17 @@ export function redactPHI(text: string): string {
   let redacted = text;
 
   // SSN pattern
-  redacted = redacted.replace(/\b\d{3}-\d{2}-\d{4}\b/g, '[SSN REDACTED]');
+  redacted = redacted.replace(/\b\d{3}-\d{2}-\d{4}\b/g, '[REDACTED_SSN]');
 
   // Credit card pattern
-  redacted = redacted.replace(/\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g, '[CC REDACTED]');
+  redacted = redacted.replace(/\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g, '[REDACTED_CC]');
 
   // Email pattern
-  redacted = redacted.replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g, '[EMAIL REDACTED]');
+  redacted = redacted.replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g, '[REDACTED_EMAIL]');
 
-  // Phone pattern
-  redacted = redacted.replace(/\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/g, '[PHONE REDACTED]');
+  // Phone pattern (7 or 10 digits)
+  redacted = redacted.replace(/\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/g, '[REDACTED_PHONE]');
+  redacted = redacted.replace(/\b\d{3}[-.]?\d{4}\b/g, '[REDACTED_PHONE]');
 
   return redacted;
 }
@@ -210,4 +204,44 @@ export function isValidJSON(str: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Validate email format
+ */
+export function validateEmail(email: string): boolean {
+  const emailRegex = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}$/;
+  return emailRegex.test(email);
+}
+
+/**
+ * Validate password against policy
+ */
+export function validatePassword(password: string): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+
+  if (password.length < 12) {
+    errors.push('Password must be at least 12 characters');
+  }
+
+  if (!/[A-Z]/.test(password)) {
+    errors.push('Password must contain at least one uppercase letter');
+  }
+
+  if (!/[a-z]/.test(password)) {
+    errors.push('Password must contain at least one lowercase letter');
+  }
+
+  if (!/[0-9]/.test(password)) {
+    errors.push('Password must contain at least one number');
+  }
+
+  if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
+    errors.push('Password must contain at least one special character');
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
 }

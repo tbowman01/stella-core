@@ -1,0 +1,150 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database with pgvector
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: arcqubit-postgres
+    environment:
+      POSTGRES_USER: arcqubit
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-arcqubit_dev}
+      POSTGRES_DB: arcqubit
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./packages/database/prisma/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U arcqubit']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - arcqubit-network
+
+  # Redis for caching and job queues
+  redis:
+    image: redis:7-alpine
+    container_name: arcqubit-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-arcqubit_redis}
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - arcqubit-network
+
+  # MinIO for object storage (S3-compatible)
+  minio:
+    image: minio/minio:latest
+    container_name: arcqubit-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-arcqubit}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-arcqubit_minio}
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - arcqubit-network
+
+  # Next.js web application
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: arcqubit-web
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://arcqubit:${POSTGRES_PASSWORD:-arcqubit_dev}@postgres:5432/arcqubit
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-arcqubit_redis}
+      STORAGE_TYPE: minio
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-arcqubit}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-arcqubit_minio}
+      JWT_SECRET: ${JWT_SECRET:-change_me_in_production}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    ports:
+      - '3000:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - arcqubit-network
+    restart: unless-stopped
+
+  # BullMQ worker for background jobs
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: arcqubit-worker
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://arcqubit:${POSTGRES_PASSWORD:-arcqubit_dev}@postgres:5432/arcqubit
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-arcqubit_redis}
+      STORAGE_TYPE: minio
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-arcqubit}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-arcqubit_minio}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - arcqubit-network
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+
+  # Nginx reverse proxy
+  nginx:
+    image: nginx:alpine
+    container_name: arcqubit-nginx
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - web
+    networks:
+      - arcqubit-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  minio_data:
+    driver: local
+
+networks:
+  arcqubit-network:
+    driver: bridge

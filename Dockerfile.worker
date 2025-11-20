@@ -1,0 +1,28 @@
+# Dockerfile for BullMQ worker process
+
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+COPY turbo.json ./
+COPY tsconfig.json ./
+
+# Copy workspace package files
+COPY packages/*/package.json ./packages/
+RUN find packages -name package.json
+
+# Install dependencies
+RUN npm install
+
+# Copy source code
+COPY packages/ ./packages/
+
+# Build packages
+RUN npm run build
+
+# Expose no ports (worker process)
+
+# Start worker
+CMD ["npm", "run", "worker", "--workspace=@arcqubit/jobs"]

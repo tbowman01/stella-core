@@ -1,0 +1,213 @@
+version: '3.9'
+
+services:
+  # PostgreSQL Database with pgvector
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: arcqubit-postgres-staging
+    environment:
+      POSTGRES_USER: arcqubit
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-staging_secure_password_123}
+      POSTGRES_DB: arcqubit_staging
+      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=en_US.UTF-8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arcqubit -d arcqubit_staging"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - arcqubit-network
+    restart: unless-stopped
+
+  # Redis Cache and Queue
+  redis:
+    image: redis:7-alpine
+    container_name: arcqubit-redis-staging
+    command: redis-server --requirepass ${REDIS_PASSWORD:-staging_redis_password_123} --appendonly yes --maxmemory 2gb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - arcqubit-network
+    restart: unless-stopped
+
+  # MinIO Object Storage
+  minio:
+    image: minio/minio:latest
+    container_name: arcqubit-minio-staging
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      MINIO_DOMAIN: storage.arcqubit.local
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - arcqubit-network
+    restart: unless-stopped
+
+  # Create MinIO buckets on startup
+  minio-setup:
+    image: minio/mc:latest
+    container_name: arcqubit-minio-setup
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin123};
+      /usr/bin/mc mb myminio/arcqubit-documents --ignore-existing;
+      /usr/bin/mc mb myminio/arcqubit-backups --ignore-existing;
+      /usr/bin/mc anonymous set download myminio/arcqubit-documents;
+      /usr/bin/mc admin user add myminio ${MINIO_APP_USER:-arcqubit} ${MINIO_APP_PASSWORD:-arcqubit_app_123};
+      exit 0;
+      "
+    networks:
+      - arcqubit-network
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: arcqubit-nginx-staging
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/staging.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx_cache:/var/cache/nginx
+    depends_on:
+      - web
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - arcqubit-network
+    restart: unless-stopped
+
+  # Next.js Web Application
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+      args:
+        NODE_ENV: staging
+    container_name: arcqubit-web-staging
+    environment:
+      NODE_ENV: staging
+      DATABASE_URL: postgresql://arcqubit:${POSTGRES_PASSWORD:-staging_secure_password_123}@postgres:5432/arcqubit_staging
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-staging_redis_password_123}
+      REDIS_DB: 0
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: 7d
+      REFRESH_TOKEN_EXPIRES_IN: 30d
+      STORAGE_PROVIDER: minio
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: false
+      MINIO_ACCESS_KEY: ${MINIO_APP_USER:-arcqubit}
+      MINIO_SECRET_KEY: ${MINIO_APP_PASSWORD:-arcqubit_app_123}
+      MINIO_BUCKET: arcqubit-documents
+      ENABLE_PLUGINS: true
+      ENABLE_AI_ASSISTANT: ${ENABLE_AI_ASSISTANT:-false}
+      ENABLE_PQC: true
+      LOG_LEVEL: info
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - arcqubit-network
+    restart: unless-stopped
+
+  # Background Workers (BullMQ)
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: arcqubit-worker-staging
+    command: npm run worker
+    environment:
+      NODE_ENV: staging
+      DATABASE_URL: postgresql://arcqubit:${POSTGRES_PASSWORD:-staging_secure_password_123}@postgres:5432/arcqubit_staging
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-staging_redis_password_123}
+      REDIS_DB: 0
+      STORAGE_PROVIDER: minio
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: false
+      MINIO_ACCESS_KEY: ${MINIO_APP_USER:-arcqubit}
+      MINIO_SECRET_KEY: ${MINIO_APP_PASSWORD:-arcqubit_app_123}
+      MINIO_BUCKET: arcqubit-documents
+      ENABLE_PLUGINS: true
+      ENABLE_PQC: true
+      LOG_LEVEL: info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+    networks:
+      - arcqubit-network
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  minio_data:
+    driver: local
+  nginx_cache:
+    driver: local
+
+networks:
+  arcqubit-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

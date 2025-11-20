@@ -1,0 +1,107 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: arcqubit-platform
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: arcqubit
+    app.kubernetes.io/component: project
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: ArcQubit Knowledge Work Platform - Enterprise Knowledge Management
+
+  # Source repositories
+  sourceRepos:
+    - https://github.com/your-org/stella-core.git
+    - https://charts.bitnami.com/bitnami  # For PostgreSQL and Redis dependencies
+
+  # Destination clusters and namespaces
+  destinations:
+    - namespace: arcqubit-staging
+      server: https://kubernetes.default.svc
+      name: in-cluster
+    - namespace: arcqubit-production
+      server: https://kubernetes.default.svc
+      name: in-cluster
+    - namespace: arcqubit-*
+      server: https://kubernetes.default.svc
+
+  # Cluster resource whitelist
+  clusterResourceWhitelist:
+    - group: ''
+      kind: Namespace
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+    - group: storage.k8s.io
+      kind: StorageClass
+
+  # Namespace resource whitelist (allow all in permitted namespaces)
+  namespaceResourceWhitelist:
+    - group: '*'
+      kind: '*'
+
+  # Roles for RBAC
+  roles:
+    # Read-only role for developers
+    - name: readonly
+      description: Read-only access to ArcQubit applications
+      policies:
+        - p, proj:arcqubit-platform:readonly, applications, get, arcqubit-platform/*, allow
+        - p, proj:arcqubit-platform:readonly, applications, sync, arcqubit-platform/*, deny
+      groups:
+        - developers
+
+    # Deploy role for CI/CD
+    - name: deployer
+      description: Deploy and sync ArcQubit applications
+      policies:
+        - p, proj:arcqubit-platform:deployer, applications, get, arcqubit-platform/*, allow
+        - p, proj:arcqubit-platform:deployer, applications, sync, arcqubit-platform/*, allow
+        - p, proj:arcqubit-platform:deployer, applications, override, arcqubit-platform/*, allow
+        - p, proj:arcqubit-platform:deployer, applications, update, arcqubit-platform/*, allow
+      groups:
+        - ci-cd
+
+    # Admin role
+    - name: admin
+      description: Full access to ArcQubit applications
+      policies:
+        - p, proj:arcqubit-platform:admin, applications, *, arcqubit-platform/*, allow
+      groups:
+        - platform-admins
+
+  # Orphaned resources monitoring
+  orphanedResources:
+    warn: true
+    ignore:
+      - group: ''
+        kind: ConfigMap
+        name: kube-root-ca.crt
+
+  # Sync windows (optional - for controlling when syncs can happen)
+  syncWindows:
+    # Production can only be synced during business hours
+    - kind: allow
+      schedule: '0 9-17 * * 1-5'  # Mon-Fri 9am-5pm
+      duration: 8h
+      applications:
+        - arcqubit-production
+      manualSync: true
+      namespaces:
+        - arcqubit-production
+
+    # Staging can be synced anytime
+    - kind: allow
+      schedule: '* * * * *'
+      duration: 24h
+      applications:
+        - arcqubit-staging
+      namespaces:
+        - arcqubit-staging
+
+  # Signature keys (for signed commits)
+  signatureKeys:
+    - keyID: ''  # Add GPG key ID if using signed commits

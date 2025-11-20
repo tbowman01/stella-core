@@ -1,0 +1,67 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: arcqubit-production
+
+# Base resources
+resources:
+  - ../../base
+
+# Patches for production environment
+patches:
+  # Patch application for production
+  - target:
+      kind: Application
+      name: arcqubit
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: arcqubit-production
+      - op: replace
+        path: /spec/source/targetRevision
+        value: main
+      - op: replace
+        path: /spec/source/helm/valueFiles
+        value:
+          - values.yaml
+          - values-production.yaml
+      - op: add
+        path: /spec/source/helm/parameters
+        value:
+          - name: image.tag
+            value: latest
+          - name: ingress.hosts[0].host
+            value: arcqubit.example.com
+      - op: replace
+        path: /spec/destination/namespace
+        value: arcqubit-production
+      - op: replace
+        path: /spec/syncPolicy/automated/prune
+        value: false
+      - op: replace
+        path: /spec/syncPolicy/automated/selfHeal
+        value: false
+      - op: replace
+        path: /metadata/labels/environment
+        value: production
+      - op: replace
+        path: /spec/info/0/value
+        value: https://arcqubit.example.com
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-options: "PruneLast=true"
+          notifications.argoproj.io/subscribe.on-sync-status-unknown.slack: arcqubit-alerts
+
+# Labels to add to all resources
+commonLabels:
+  environment: production
+  managed-by: argocd
+  critical: "true"
+
+# Annotations to add to all resources
+commonAnnotations:
+  argocd.argoproj.io/sync-wave: "0"
+  notifications.argoproj.io/subscribe.on-sync-succeeded.slack: arcqubit-deployments
+  notifications.argoproj.io/subscribe.on-sync-failed.slack: arcqubit-alerts
+  notifications.argoproj.io/subscribe.on-health-degraded.slack: arcqubit-alerts

@@ -1,0 +1,115 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: arcqubit-platform
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: arcqubit
+    app.kubernetes.io/component: app-of-apps
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: arcqubit-platform
+
+  source:
+    repoURL: https://github.com/your-org/stella-core.git
+    targetRevision: HEAD
+    path: argocd/apps
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: arcqubit-environments
+  namespace: argocd
+spec:
+  generators:
+    # Generator for each environment
+    - list:
+        elements:
+          - environment: staging
+            targetRevision: main
+            imageTag: staging
+            namespace: arcqubit-staging
+            domain: staging.arcqubit.example.com
+            autoSync: "true"
+            selfHeal: "true"
+
+          - environment: production
+            targetRevision: main
+            imageTag: latest
+            namespace: arcqubit-production
+            domain: arcqubit.example.com
+            autoSync: "false"
+            selfHeal: "false"
+
+  template:
+    metadata:
+      name: 'arcqubit-{{environment}}'
+      namespace: argocd
+      labels:
+        environment: '{{environment}}'
+        app.kubernetes.io/name: arcqubit
+      annotations:
+        notifications.argoproj.io/subscribe.on-sync-succeeded.slack: arcqubit-deployments
+        notifications.argoproj.io/subscribe.on-sync-failed.slack: arcqubit-alerts
+
+    spec:
+      project: arcqubit-platform
+
+      source:
+        repoURL: https://github.com/your-org/stella-core.git
+        targetRevision: '{{targetRevision}}'
+        path: helm/arcqubit
+
+        helm:
+          releaseName: 'arcqubit'
+          valueFiles:
+            - values.yaml
+            - 'values-{{environment}}.yaml'
+          parameters:
+            - name: image.tag
+              value: '{{imageTag}}'
+            - name: ingress.hosts[0].host
+              value: '{{domain}}'
+
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{namespace}}'
+
+      syncPolicy:
+        automated:
+          prune: '{{autoSync}}'
+          selfHeal: '{{selfHeal}}'
+        syncOptions:
+          - CreateNamespace=true
+          - PrunePropagationPolicy=foreground
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+
+      ignoreDifferences:
+        - group: apps
+          kind: Deployment
+          jsonPointers:
+            - /spec/replicas
+
+      info:
+        - name: URL
+          value: 'https://{{domain}}'
+        - name: Environment
+          value: '{{environment}}'

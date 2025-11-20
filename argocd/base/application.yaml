@@ -1,0 +1,78 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: arcqubit
+  # ArgoCD namespace
+  namespace: argocd
+  # Finalizers ensure cascading deletes
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app.kubernetes.io/name: arcqubit
+    app.kubernetes.io/component: application
+spec:
+  # Project name
+  project: arcqubit-platform
+
+  # Source repository
+  source:
+    repoURL: https://github.com/your-org/stella-core.git
+    targetRevision: HEAD
+    path: helm/arcqubit
+
+    helm:
+      # Release name
+      releaseName: arcqubit
+
+      # Values files
+      valueFiles:
+        - values.yaml
+
+      # Skip CRDs
+      skipCrds: false
+
+      # Helm parameters (can be overridden per environment)
+      parameters: []
+
+  # Destination cluster
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: arcqubit
+
+  # Sync policy
+  syncPolicy:
+    # Automated sync
+    automated:
+      # Automatically apply changes from Git
+      prune: true
+      # Automatically sync when application is out of sync
+      selfHeal: true
+      # Allow empty resources
+      allowEmpty: false
+
+    # Sync options
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - RespectIgnoreDifferences=true
+
+    # Retry strategy
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  # Health assessment
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+
+  # Refresh interval
+  info:
+    - name: URL
+      value: https://arcqubit.example.com

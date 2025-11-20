@@ -1,0 +1,200 @@
+# Staging environment overrides
+
+## Reduce replicas for staging
+replicaCount: 2
+
+## Image configuration
+image:
+  tag: "staging"
+  pullPolicy: Always
+
+## Ingress for staging
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-staging"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "500m"
+  hosts:
+    - host: staging.arcqubit.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: arcqubit-staging-tls
+      hosts:
+        - staging.arcqubit.example.com
+
+## Reduced resources for staging
+resources:
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+  requests:
+    cpu: 250m
+    memory: 512Mi
+
+## Autoscaling for staging
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 75
+
+## Pod Disruption Budget - allow more disruption in staging
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+## Environment configuration
+env:
+  NODE_ENV: staging
+  LOG_LEVEL: debug
+
+## Application configuration
+config:
+  features:
+    enablePlugins: true
+    enableAIAssistant: true
+    enablePQC: true
+    enableSSO: false
+    enableMFA: false
+
+  rateLimit:
+    windowMs: 900000
+    maxRequests: 500
+    authMaxRequests: 20
+
+## Worker configuration
+worker:
+  enabled: true
+  replicaCount: 2
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 125m
+      memory: 256Mi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+
+  concurrency: 5
+
+## PostgreSQL - smaller instance for staging
+postgresql:
+  enabled: true
+  auth:
+    database: arcqubit_staging
+
+  primary:
+    persistence:
+      size: 50Gi
+
+    resources:
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+      requests:
+        cpu: 500m
+        memory: 1Gi
+
+## Redis - smaller instance for staging
+redis:
+  enabled: true
+
+  master:
+    persistence:
+      size: 5Gi
+
+    resources:
+      limits:
+        cpu: 500m
+        memory: 1Gi
+      requests:
+        cpu: 125m
+        memory: 256Mi
+
+  replica:
+    replicaCount: 1
+    persistence:
+      size: 5Gi
+
+    resources:
+      limits:
+        cpu: 500m
+        memory: 1Gi
+      requests:
+        cpu: 125m
+        memory: 256Mi
+
+## External secrets - staging secret store
+externalSecrets:
+  enabled: true
+  secretStore:
+    name: aws-secrets-manager-staging
+    kind: SecretStore
+
+  secrets:
+    - name: arcqubit-secrets
+      refreshInterval: 1h
+      data:
+        - secretKey: JWT_SECRET
+          remoteRef:
+            key: arcqubit/staging/jwt-secret
+
+        - secretKey: DATABASE_PASSWORD
+          remoteRef:
+            key: arcqubit/staging/database-password
+
+        - secretKey: REDIS_PASSWORD
+          remoteRef:
+            key: arcqubit/staging/redis-password
+
+        - secretKey: S3_ACCESS_KEY
+          remoteRef:
+            key: arcqubit/staging/s3-access-key
+
+        - secretKey: S3_SECRET_KEY
+          remoteRef:
+            key: arcqubit/staging/s3-secret-key
+
+        - secretKey: SENTRY_DSN
+          remoteRef:
+            key: arcqubit/staging/sentry-dsn
+
+## Storage - staging bucket
+storage:
+  provider: s3
+  bucket: arcqubit-staging-documents
+  region: us-east-1
+
+## Monitoring - staging configuration
+monitoring:
+  enabled: true
+
+  sentry:
+    enabled: true
+    environment: staging
+    tracesSampleRate: 0.5
+
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+
+  datadog:
+    enabled: false
+
+## Backup - less frequent for staging
+backup:
+  enabled: true
+  schedule: "0 3 * * *"  # Daily at 3 AM
+  retention: 7d

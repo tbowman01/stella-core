@@ -1,0 +1,39 @@
+apiVersion: v2
+name: arcqubit
+description: ArcQubit Knowledge Work Platform - Enterprise Knowledge Management with Post-Quantum Cryptography
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+
+keywords:
+  - knowledge-management
+  - post-quantum-cryptography
+  - enterprise
+  - document-management
+  - ai-assistant
+
+maintainers:
+  - name: ArcQubit Team
+    email: support@arcqubit.com
+
+sources:
+  - https://github.com/your-org/stella-core
+
+dependencies:
+  - name: postgresql
+    version: "12.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+    tags:
+      - database
+
+  - name: redis
+    version: "17.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled
+    tags:
+      - cache
+
+annotations:
+  category: Knowledge Management
+  licenses: MIT

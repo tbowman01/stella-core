@@ -1,0 +1,398 @@
+# Default values for ArcQubit Platform
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+## Global configuration
+global:
+  imageRegistry: ghcr.io
+  imagePullSecrets: []
+  storageClass: ""
+
+## Application image configuration
+image:
+  registry: ghcr.io
+  repository: your-org/stella-core
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+## Number of replicas for web application
+replicaCount: 3
+
+## Service account
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+## Pod annotations
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "3000"
+  prometheus.io/path: "/api/metrics"
+
+## Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+## Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+
+## Service configuration
+service:
+  type: ClusterIP
+  port: 3000
+  targetPort: 3000
+  annotations: {}
+
+## Ingress configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "500m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+  hosts:
+    - host: arcqubit.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: arcqubit-tls
+      hosts:
+        - arcqubit.example.com
+
+## Resource limits and requests
+resources:
+  limits:
+    cpu: 2000m
+    memory: 4Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+## Horizontal Pod Autoscaler
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+## Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+## Node selector
+nodeSelector: {}
+
+## Tolerations
+tolerations: []
+
+## Affinity
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - arcqubit
+          topologyKey: kubernetes.io/hostname
+
+## Liveness probe
+livenessProbe:
+  httpGet:
+    path: /api/health
+    port: 3000
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+## Readiness probe
+readinessProbe:
+  httpGet:
+    path: /api/health
+    port: 3000
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+## Startup probe
+startupProbe:
+  httpGet:
+    path: /api/health
+    port: 3000
+  initialDelaySeconds: 0
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 30
+
+## Environment variables
+env:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  PORT: 3000
+
+## Application configuration
+config:
+  # Feature flags
+  features:
+    enablePlugins: true
+    enableAIAssistant: true
+    enablePQC: true
+    enableSSO: true
+    enableMFA: true
+
+  # Rate limiting
+  rateLimit:
+    windowMs: 900000  # 15 minutes
+    maxRequests: 1000
+    authMaxRequests: 10
+
+  # Cache TTL
+  cache:
+    userTTL: 600     # 10 minutes
+    documentTTL: 300 # 5 minutes
+    searchTTL: 120   # 2 minutes
+
+  # File upload
+  upload:
+    maxFileSize: 500000000  # 500MB
+    allowedMimeTypes:
+      - application/pdf
+      - application/msword
+      - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+      - text/plain
+      - image/jpeg
+      - image/png
+
+## Worker configuration (background jobs)
+worker:
+  enabled: true
+  replicaCount: 5
+
+  image:
+    registry: ghcr.io
+    repository: your-org/stella-core
+    tag: "latest"
+    pullPolicy: IfNotPresent
+
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 5
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 80
+
+  # Worker concurrency per pod
+  concurrency: 10
+
+  # Queues to process
+  queues:
+    - document-processing
+    - embeddings
+    - notifications
+    - exports
+    - imports
+    - analytics
+    - maintenance
+
+## PostgreSQL configuration
+postgresql:
+  enabled: true
+  auth:
+    username: arcqubit
+    password: ""  # Set via external secret
+    database: arcqubit_production
+
+  primary:
+    persistence:
+      enabled: true
+      size: 100Gi
+      storageClass: ""
+
+    resources:
+      limits:
+        cpu: 4000m
+        memory: 8Gi
+      requests:
+        cpu: 1000m
+        memory: 2Gi
+
+    podAnnotations:
+      backup.velero.io/backup-volumes: data
+
+  image:
+    repository: pgvector/pgvector
+    tag: pg16
+
+  primary:
+    initdb:
+      scripts:
+        00-extensions.sql: |
+          CREATE EXTENSION IF NOT EXISTS vector;
+          CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+          CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+## Redis configuration
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: true
+    password: ""  # Set via external secret
+
+  master:
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: ""
+
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+      requests:
+        cpu: 250m
+        memory: 512Mi
+
+  replica:
+    replicaCount: 2
+    persistence:
+      enabled: true
+      size: 10Gi
+
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+      requests:
+        cpu: 250m
+        memory: 512Mi
+
+## External secrets configuration
+externalSecrets:
+  enabled: true
+  secretStore:
+    name: aws-secrets-manager
+    kind: SecretStore
+
+  secrets:
+    - name: arcqubit-secrets
+      refreshInterval: 1h
+      data:
+        - secretKey: JWT_SECRET
+          remoteRef:
+            key: arcqubit/production/jwt-secret
+
+        - secretKey: DATABASE_PASSWORD
+          remoteRef:
+            key: arcqubit/production/database-password
+
+        - secretKey: REDIS_PASSWORD
+          remoteRef:
+            key: arcqubit/production/redis-password
+
+        - secretKey: S3_ACCESS_KEY
+          remoteRef:
+            key: arcqubit/production/s3-access-key
+
+        - secretKey: S3_SECRET_KEY
+          remoteRef:
+            key: arcqubit/production/s3-secret-key
+
+## S3/Object Storage configuration
+storage:
+  provider: s3
+  bucket: arcqubit-documents
+  region: us-east-1
+  endpoint: ""  # Leave empty for AWS S3
+  # For MinIO or compatible S3:
+  # endpoint: "https://minio.example.com"
+
+## Monitoring configuration
+monitoring:
+  enabled: true
+
+  # Sentry
+  sentry:
+    enabled: true
+    dsn: ""  # Set via external secret
+    environment: production
+    tracesSampleRate: 0.1
+
+  # Prometheus
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+      path: /api/metrics
+
+  # DataDog
+  datadog:
+    enabled: false
+    apiKey: ""  # Set via external secret
+
+## Backup configuration
+backup:
+  enabled: true
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  retention: 30d
+
+  velero:
+    enabled: true
+    defaultVolumesToRestic: true
+
+## Network policies
+networkPolicy:
+  enabled: true
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 3000
+
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 5432  # PostgreSQL
+        - protocol: TCP
+          port: 6379  # Redis
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443   # HTTPS for external APIs

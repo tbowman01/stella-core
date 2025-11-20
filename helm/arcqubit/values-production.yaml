@@ -1,0 +1,330 @@
+# Production environment overrides
+
+## Production replicas
+replicaCount: 5
+
+## Image configuration
+image:
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+## Ingress for production
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "500m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+  hosts:
+    - host: arcqubit.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+    - host: www.arcqubit.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: arcqubit-production-tls
+      hosts:
+        - arcqubit.example.com
+        - www.arcqubit.example.com
+
+## Production resources
+resources:
+  limits:
+    cpu: 4000m
+    memory: 8Gi
+  requests:
+    cpu: 1000m
+    memory: 2Gi
+
+## Autoscaling for production
+autoscaling:
+  enabled: true
+  minReplicas: 5
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+## Pod Disruption Budget - strict for production
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 3
+
+## Environment configuration
+env:
+  NODE_ENV: production
+  LOG_LEVEL: warn
+
+## Application configuration
+config:
+  features:
+    enablePlugins: true
+    enableAIAssistant: true
+    enablePQC: true
+    enableSSO: true
+    enableMFA: true
+
+  rateLimit:
+    windowMs: 900000  # 15 minutes
+    maxRequests: 1000
+    authMaxRequests: 10
+
+  cache:
+    userTTL: 600
+    documentTTL: 300
+    searchTTL: 120
+
+  upload:
+    maxFileSize: 500000000
+
+## Worker configuration - production scale
+worker:
+  enabled: true
+  replicaCount: 10
+
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 10
+    maxReplicas: 50
+    targetCPUUtilizationPercentage: 75
+
+  concurrency: 10
+
+  queues:
+    - document-processing
+    - embeddings
+    - notifications
+    - exports
+    - imports
+    - analytics
+    - maintenance
+
+## PostgreSQL - production instance
+postgresql:
+  enabled: true
+  auth:
+    database: arcqubit_production
+
+  primary:
+    persistence:
+      enabled: true
+      size: 500Gi
+      storageClass: "fast-ssd"
+
+    resources:
+      limits:
+        cpu: 8000m
+        memory: 16Gi
+      requests:
+        cpu: 2000m
+        memory: 4Gi
+
+    podAnnotations:
+      backup.velero.io/backup-volumes: data
+      backup.velero.io/backup-volumes-excludes: ""
+
+  image:
+    repository: pgvector/pgvector
+    tag: pg16
+
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+
+## Redis - production cluster
+redis:
+  enabled: true
+  architecture: replication
+  auth:
+    enabled: true
+
+  master:
+    persistence:
+      enabled: true
+      size: 50Gi
+      storageClass: "fast-ssd"
+
+    resources:
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+      requests:
+        cpu: 500m
+        memory: 1Gi
+
+  replica:
+    replicaCount: 3
+    persistence:
+      enabled: true
+      size: 50Gi
+      storageClass: "fast-ssd"
+
+    resources:
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+      requests:
+        cpu: 500m
+        memory: 1Gi
+
+  sentinel:
+    enabled: true
+    quorum: 2
+
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+
+## External secrets - production secret store
+externalSecrets:
+  enabled: true
+  secretStore:
+    name: aws-secrets-manager-production
+    kind: SecretStore
+
+  secrets:
+    - name: arcqubit-secrets
+      refreshInterval: 1h
+      data:
+        - secretKey: JWT_SECRET
+          remoteRef:
+            key: arcqubit/production/jwt-secret
+
+        - secretKey: DATABASE_PASSWORD
+          remoteRef:
+            key: arcqubit/production/database-password
+
+        - secretKey: REDIS_PASSWORD
+          remoteRef:
+            key: arcqubit/production/redis-password
+
+        - secretKey: S3_ACCESS_KEY
+          remoteRef:
+            key: arcqubit/production/s3-access-key
+
+        - secretKey: S3_SECRET_KEY
+          remoteRef:
+            key: arcqubit/production/s3-secret-key
+
+        - secretKey: SENTRY_DSN
+          remoteRef:
+            key: arcqubit/production/sentry-dsn
+
+        - secretKey: DATADOG_API_KEY
+          remoteRef:
+            key: arcqubit/production/datadog-api-key
+
+## Storage - production bucket with versioning
+storage:
+  provider: s3
+  bucket: arcqubit-production-documents
+  region: us-east-1
+
+## Monitoring - full production monitoring
+monitoring:
+  enabled: true
+
+  sentry:
+    enabled: true
+    environment: production
+    tracesSampleRate: 0.1
+
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+      path: /api/metrics
+
+  datadog:
+    enabled: true
+
+## Backup - frequent production backups
+backup:
+  enabled: true
+  schedule: "0 */6 * * *"  # Every 6 hours
+  retention: 30d
+
+  velero:
+    enabled: true
+    defaultVolumesToRestic: true
+
+## Network policies - strict production security
+networkPolicy:
+  enabled: true
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 3000
+
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 53
+        - protocol: UDP
+          port: 53
+
+## Affinity - spread across zones for HA
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values:
+                - arcqubit
+        topologyKey: topology.kubernetes.io/zone
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - arcqubit
+          topologyKey: kubernetes.io/hostname

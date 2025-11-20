@@ -1,0 +1,18 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.prometheus.enabled .Values.monitoring.prometheus.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "arcqubit.fullname" . }}
+  labels:
+    {{- include "arcqubit.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "arcqubit.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: web
+  endpoints:
+    - port: http
+      path: {{ .Values.monitoring.prometheus.serviceMonitor.path }}
+      interval: {{ .Values.monitoring.prometheus.serviceMonitor.interval }}
+      scrapeTimeout: 10s
+{{- end }}

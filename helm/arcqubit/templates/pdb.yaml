@@ -1,0 +1,20 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "arcqubit.fullname" . }}
+  labels:
+    {{- include "arcqubit.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  {{- if .Values.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  {{- if .Values.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "arcqubit.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: web
+{{- end }}

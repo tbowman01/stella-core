@@ -1,0 +1,212 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "arcqubit.fullname" . }}
+  labels:
+    {{- include "arcqubit.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "arcqubit.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "arcqubit.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: web
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "arcqubit.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      initContainers:
+        - name: migrations
+          image: {{ include "arcqubit.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Running database migrations..."
+              npx prisma migrate deploy --schema=packages/database/prisma/schema.prisma
+              echo "Generating Prisma client..."
+              npx prisma generate --schema=packages/database/prisma/schema.prisma
+              echo "Migrations complete!"
+          env:
+            - name: DATABASE_URL
+              value: {{ include "arcqubit.databaseUrl" . | quote }}
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "arcqubit.fullname" . }}-secrets
+                  key: DATABASE_PASSWORD
+      containers:
+        - name: web
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: {{ include "arcqubit.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+              protocol: TCP
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          startupProbe:
+            {{- toYaml .Values.startupProbe | nindent 12 }}
+          env:
+            # Application configuration
+            - name: NODE_ENV
+              value: {{ .Values.env.NODE_ENV | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.env.LOG_LEVEL | quote }}
+            - name: PORT
+              value: {{ .Values.env.PORT | quote }}
+
+            # Database
+            - name: DATABASE_URL
+              value: {{ include "arcqubit.databaseUrl" . | quote }}
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "arcqubit.fullname" . }}-secrets
+                  key: DATABASE_PASSWORD
+            - name: DATABASE_POOL_SIZE
+              value: "50"
+            - name: DATABASE_SSL
+              value: "true"
+
+            # Redis
+            - name: REDIS_HOST
+              value: {{ include "arcqubit.fullname" . }}-redis-master
+            - name: REDIS_PORT
+              value: "6379"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "arcqubit.fullname" . }}-secrets
+                  key: REDIS_PASSWORD
+
+            # JWT
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "arcqubit.fullname" . }}-secrets
+                  key: JWT_SECRET
+            - name: JWT_EXPIRY
+              value: "1h"
+            - name: JWT_REFRESH_EXPIRY
+              value: "7d"
+
+            # Storage (S3)
+            - name: STORAGE_PROVIDER
+              value: {{ .Values.storage.provider | quote }}
+            - name: S3_BUCKET
+              value: {{ .Values.storage.bucket | quote }}
+            - name: S3_REGION
+              value: {{ .Values.storage.region | quote }}
+            {{- if .Values.storage.endpoint }}
+            - name: S3_ENDPOINT
+              value: {{ .Values.storage.endpoint | quote }}
+            {{- end }}
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "arcqubit.fullname" . }}-secrets
+                  key: S3_ACCESS_KEY
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "arcqubit.fullname" . }}-secrets
+                  key: S3_SECRET_KEY
+
+            # Feature flags
+            - name: ENABLE_PLUGINS
+              value: {{ .Values.config.features.enablePlugins | quote }}
+            - name: ENABLE_AI_ASSISTANT
+              value: {{ .Values.config.features.enableAIAssistant | quote }}
+            - name: ENABLE_PQC
+              value: {{ .Values.config.features.enablePQC | quote }}
+            - name: ENABLE_SSO
+              value: {{ .Values.config.features.enableSSO | quote }}
+            - name: ENABLE_MFA
+              value: {{ .Values.config.features.enableMFA | quote }}
+
+            # Rate limiting
+            - name: RATE_LIMIT_WINDOW_MS
+              value: {{ .Values.config.rateLimit.windowMs | quote }}
+            - name: RATE_LIMIT_MAX_REQUESTS
+              value: {{ .Values.config.rateLimit.maxRequests | quote }}
+            - name: AUTH_RATE_LIMIT_MAX_REQUESTS
+              value: {{ .Values.config.rateLimit.authMaxRequests | quote }}
+
+            # Cache TTL
+            - name: CACHE_TTL_USER
+              value: {{ .Values.config.cache.userTTL | quote }}
+            - name: CACHE_TTL_DOCUMENT
+              value: {{ .Values.config.cache.documentTTL | quote }}
+            - name: CACHE_TTL_SEARCH
+              value: {{ .Values.config.cache.searchTTL | quote }}
+
+            # File upload
+            - name: MAX_FILE_SIZE
+              value: {{ .Values.config.upload.maxFileSize | quote }}
+
+            # Monitoring
+            {{- if .Values.monitoring.sentry.enabled }}
+            - name: SENTRY_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "arcqubit.fullname" . }}-secrets
+                  key: SENTRY_DSN
+            - name: SENTRY_ENVIRONMENT
+              value: {{ .Values.monitoring.sentry.environment | quote }}
+            - name: SENTRY_TRACES_SAMPLE_RATE
+              value: {{ .Values.monitoring.sentry.tracesSampleRate | quote }}
+            {{- end }}
+
+            {{- if .Values.monitoring.datadog.enabled }}
+            - name: DD_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "arcqubit.fullname" . }}-secrets
+                  key: DATADOG_API_KEY
+            - name: DD_SERVICE
+              value: arcqubit
+            - name: DD_ENV
+              value: {{ .Values.env.NODE_ENV | quote }}
+            {{- end }}
+
+          envFrom:
+            - configMapRef:
+                name: {{ include "arcqubit.fullname" . }}-config
+
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

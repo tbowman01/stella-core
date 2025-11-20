@@ -1,0 +1,155 @@
+{{- if .Values.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "arcqubit.fullname" . }}-worker
+  labels:
+    {{- include "arcqubit.worker.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.worker.autoscaling.enabled }}
+  replicas: {{ .Values.worker.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "arcqubit.worker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "arcqubit.worker.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "arcqubit.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: worker
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: {{ include "arcqubit.worker.image" . }}
+          imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
+          command:
+            - node
+            - packages/jobs/dist/worker.js
+          env:
+            # Application configuration
+            - name: NODE_ENV
+              value: {{ .Values.env.NODE_ENV | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.env.LOG_LEVEL | quote }}
+
+            # Worker configuration
+            - name: WORKER_CONCURRENCY
+              value: {{ .Values.worker.concurrency | quote }}
+            - name: WORKER_QUEUES
+              value: {{ join "," .Values.worker.queues | quote }}
+
+            # Database
+            - name: DATABASE_URL
+              value: {{ include "arcqubit.databaseUrl" . | quote }}
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "arcqubit.fullname" . }}-secrets
+                  key: DATABASE_PASSWORD
+            - name: DATABASE_POOL_SIZE
+              value: "20"
+            - name: DATABASE_SSL
+              value: "true"
+
+            # Redis
+            - name: REDIS_HOST
+              value: {{ include "arcqubit.fullname" . }}-redis-master
+            - name: REDIS_PORT
+              value: "6379"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "arcqubit.fullname" . }}-secrets
+                  key: REDIS_PASSWORD
+
+            # Storage (S3)
+            - name: STORAGE_PROVIDER
+              value: {{ .Values.storage.provider | quote }}
+            - name: S3_BUCKET
+              value: {{ .Values.storage.bucket | quote }}
+            - name: S3_REGION
+              value: {{ .Values.storage.region | quote }}
+            {{- if .Values.storage.endpoint }}
+            - name: S3_ENDPOINT
+              value: {{ .Values.storage.endpoint | quote }}
+            {{- end }}
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "arcqubit.fullname" . }}-secrets
+                  key: S3_ACCESS_KEY
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "arcqubit.fullname" . }}-secrets
+                  key: S3_SECRET_KEY
+
+            # Feature flags
+            - name: ENABLE_PLUGINS
+              value: {{ .Values.config.features.enablePlugins | quote }}
+            - name: ENABLE_AI_ASSISTANT
+              value: {{ .Values.config.features.enableAIAssistant | quote }}
+            - name: ENABLE_PQC
+              value: {{ .Values.config.features.enablePQC | quote }}
+
+            # Monitoring
+            {{- if .Values.monitoring.sentry.enabled }}
+            - name: SENTRY_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "arcqubit.fullname" . }}-secrets
+                  key: SENTRY_DSN
+            - name: SENTRY_ENVIRONMENT
+              value: {{ .Values.monitoring.sentry.environment | quote }}
+            {{- end }}
+
+            {{- if .Values.monitoring.datadog.enabled }}
+            - name: DD_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "arcqubit.fullname" . }}-secrets
+                  key: DATADOG_API_KEY
+            - name: DD_SERVICE
+              value: arcqubit-worker
+            - name: DD_ENV
+              value: {{ .Values.env.NODE_ENV | quote }}
+            {{- end }}
+
+          envFrom:
+            - configMapRef:
+                name: {{ include "arcqubit.fullname" . }}-config
+
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - ps aux | grep -v grep | grep node
+            initialDelaySeconds: 30
+            periodSeconds: 30
+
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
